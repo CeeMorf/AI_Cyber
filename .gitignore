@@ -1,0 +1,11 @@
+# Vendored/downloaded by scripts/download_hayabusa.sh — not hand-edited, not tracked.
+/hayabusa/
+
+__pycache__/
+*.pyc
+
+# Hayabusa writes here if run manually without -Q (scan_evtx always passes -Q).
+/logs/
+
+# Local machine-specific settings; .claude/settings.json (shared) is still tracked.
+.claude/settings.local.json

@@ -1,0 +1,42 @@
+title: Directory Replication Services Rights Abuse (DCSync)
+id: 89cb9e3d-7a97-484d-967b-f3c0bf9c0241
+status: test
+description: |
+    Detects use of directory replication permissions (DS-Replication-Get-Changes /
+    DS-Replication-Get-Changes-All) by a security principal that is not a Domain
+    Controller machine account. Tools such as Mimikatz's lsadump::dcsync and
+    Impacket's secretsdump.py abuse these rights to replicate password hashes,
+    including krbtgt, from a Domain Controller without needing code execution on it.
+references:
+    - https://attack.mitre.org/techniques/T1003/006/
+    - https://blog.blacklanternsecurity.com/p/detecting-dcsync
+    - https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-4662
+author: mcp-hayabusa sample rules
+date: 2026-07-12
+modified: 2026-07-12
+tags:
+    - attack.credential-access
+    - attack.t1003.006
+logsource:
+    product: windows
+    service: security
+detection:
+    security:
+        Channel: Security
+    selection:
+        EventID: 4662
+        Properties|contains:
+            - Replicating Directory Changes All
+            - 1131f6ad-9c07-11d1-f79f-00c04fc2dcd2
+            - 1131f6aa-9c07-11d1-f79f-00c04fc2dcd2
+        AccessMask: '0x100'
+    filter_domain_controllers:
+        SubjectUserName|endswith: $
+    filter_system_accounts:
+        SubjectDomainName: Window Manager
+    condition: security and (selection and not 1 of filter_*)
+falsepositives:
+    - Legitimate replication traffic from a newly promoted Domain Controller
+    - Azure AD Connect / Entra Connect sync accounts (should be reviewed and allow-listed explicitly)
+level: high
+ruletype: Sigma

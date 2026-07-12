@@ -1,0 +1,47 @@
+title: Suspicious Process Access to LSASS Memory
+id: 4389726f-0efc-4aa4-9b1c-cd1a36915ca3
+status: test
+description: |
+    Detects a process opening a handle to LSASS.exe with an access mask commonly
+    associated with credential dumping tools (e.g. Mimikatz, ProcDump-based dumpers).
+    LSASS holds cached credentials, NTLM hashes, and Kerberos tickets in memory, making
+    it a primary target for tools implementing OS Credential Dumping.
+references:
+    - https://attack.mitre.org/techniques/T1003/001/
+    - https://www.slideshare.net/heirhabarov/hunting-for-credentials-dumping-in-windows-environment
+author: mcp-hayabusa sample rules
+date: 2026-07-12
+modified: 2026-07-12
+tags:
+    - attack.credential-access
+    - attack.t1003.001
+logsource:
+    category: process_access
+    product: windows
+detection:
+    process_access:
+        EventID: 10
+        Channel: Microsoft-Windows-Sysmon/Operational
+    selection:
+        TargetImage|endswith: \lsass.exe
+        GrantedAccess|contains:
+            - '0x1010'
+            - '0x1038'
+            - '0x1400'
+            - '0x1410'
+            - '0x1438'
+            - '0x143a'
+            - '0x1fffff'
+    filter_known_tools:
+        SourceImage|endswith:
+            - \svchost.exe
+            - \MsMpEng.exe
+            - \wmiprvse.exe
+            - \procexp64.exe
+            - \procmon64.exe
+            - \taskmgr.exe
+    condition: process_access and (selection and not filter_known_tools)
+falsepositives:
+    - Endpoint security products and system utilities that legitimately inspect LSASS
+level: high
+ruletype: Sigma

@@ -1,0 +1,39 @@
+title: Possible Kerberoasting Via RC4 Service Ticket Request
+id: 91354267-caf5-40e3-850d-14ced6899cd7
+status: test
+description: |
+    Detects a Kerberos service ticket (TGS) request that succeeds using the legacy
+    RC4-HMAC (0x17) encryption type. Attackers request TGS tickets for service accounts
+    and crack the RC4 ticket offline to recover the plaintext service account password,
+    a technique commonly known as Kerberoasting.
+references:
+    - https://attack.mitre.org/techniques/T1558/003/
+    - https://www.trustedsec.com/blog/art_of_kerberoast/
+    - https://adsecurity.org/?p=3513
+author: mcp-hayabusa sample rules
+date: 2026-07-12
+modified: 2026-07-12
+tags:
+    - attack.credential-access
+    - attack.t1558.003
+logsource:
+    product: windows
+    service: security
+detection:
+    security:
+        Channel: Security
+    selection:
+        EventID: 4769
+        Status: '0x0'
+        TicketEncryptionType: '0x17'
+    filter_krbtgt:
+        ServiceName|endswith:
+            - krbtgt
+            - $
+    filter_machine_accounts:
+        TargetUserName|contains: $@
+    condition: security and (selection and not 1 of filter_*)
+falsepositives:
+    - Legacy applications or service accounts that do not support AES encryption
+level: medium
+ruletype: Sigma

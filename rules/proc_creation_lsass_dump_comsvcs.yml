@@ -1,0 +1,38 @@
+title: Potential LSASS Memory Dump Via comsvcs.dll MiniDump
+id: 0de2c00f-0c98-401e-b8be-f7cc772ff89a
+status: test
+description: |
+    Detects use of rundll32.exe to invoke the MiniDump export of comsvcs.dll against
+    the LSASS process ID. This is a well-known living-off-the-land technique to dump
+    LSASS memory without dropping additional dumping tools like ProcDump or Mimikatz.
+references:
+    - https://attack.mitre.org/techniques/T1003/001/
+    - https://learn.microsoft.com/en-us/sysinternals/downloads/procdump
+author: mcp-hayabusa sample rules
+date: 2026-07-12
+modified: 2026-07-12
+tags:
+    - attack.credential-access
+    - attack.t1003.001
+    - attack.defense-evasion
+    - attack.t1218.011
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    process_creation:
+        EventID: 4688
+        Channel: Security
+    selection_image:
+        Image|endswith: \rundll32.exe
+    selection_export:
+        CommandLine|contains: comsvcs.dll
+    selection_action:
+        CommandLine|contains:
+            - MiniDump
+            - '#24'
+    condition: process_creation and (all of selection_*)
+falsepositives:
+    - Unlikely; comsvcs.dll MiniDump is rarely invoked for legitimate administrative purposes
+level: critical
+ruletype: Sigma
