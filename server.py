@@ -397,15 +397,15 @@ def get_rules_by_technique(technique_id: str) -> dict:
     }
 
 
-@mcp.resource("detection://attack/techniques/{technique_id}", mime_type="application/json")
-def get_attack_technique_coverage(technique_id: str) -> dict:
+def _assess_technique_coverage(technique_id: str) -> dict:
     """Look up an ATT&CK technique's name/description and assess our Sigma rule coverage for it.
 
     Coverage is "gap" (no matching rules), "covered", or "partial". For a
     technique with sub-techniques (e.g. T1003), coverage reflects how many of
     its sub-techniques have at least one matching rule; for a leaf technique,
     it's "covered" only if a matching rule has reached status "stable" (an
-    only-"test"-status match is "partial").
+    only-"test"-status match is "partial"). Raises ValueError if the technique
+    ID is unknown.
     """
     technique = _normalize_technique_id(technique_id)
     attack_id = technique.upper()
@@ -447,10 +447,178 @@ def get_attack_technique_coverage(technique_id: str) -> dict:
         "is_subtechnique": entry["is_subtechnique"],
         "parent_technique": entry["parent_technique"],
         "sub_techniques": sub_techniques,
+        "tactics": entry.get("tactics", []),
         "matching_rules": matching_rules,
         "coverage": coverage,
         "sub_technique_coverage": sub_technique_coverage,
     }
+
+
+@mcp.resource("detection://attack/techniques/{technique_id}", mime_type="application/json")
+def get_attack_technique_coverage(technique_id: str) -> dict:
+    """Look up an ATT&CK technique's name/description and assess our Sigma rule coverage for it.
+
+    Coverage is "gap" (no matching rules), "covered", or "partial". For a
+    technique with sub-techniques (e.g. T1003), coverage reflects how many of
+    its sub-techniques have at least one matching rule; for a leaf technique,
+    it's "covered" only if a matching rule has reached status "stable" (an
+    only-"test"-status match is "partial").
+    """
+    return _assess_technique_coverage(technique_id)
+
+
+# MITRE renamed the "Defense Evasion" tactic, splitting it into "stealth" and
+# "defense-impairment" in the ATT&CK data this index is built from. Rules in
+# this repo (and the wider Sigma corpus) still use the old "defense-evasion"
+# tag for tactic labeling, so a bare lookup of that name would otherwise fail
+# with no explanation.
+LEGACY_TACTIC_HINTS = {
+    "defense-evasion": (
+        "MITRE ATT&CK split the 'Defense Evasion' tactic into 'stealth' and "
+        "'defense-impairment' -- try one of those instead."
+    ),
+}
+
+_KNOWN_TACTICS_CACHE = None
+
+
+def _load_known_tactics() -> set:
+    global _KNOWN_TACTICS_CACHE
+    if _KNOWN_TACTICS_CACHE is None:
+        techniques = _load_attack_techniques()
+        _KNOWN_TACTICS_CACHE = {
+            tactic for entry in techniques.values() for tactic in entry.get("tactics", [])
+        }
+    return _KNOWN_TACTICS_CACHE
+
+
+def _normalize_tactic_slug(value: str) -> str:
+    return value.strip().lower().replace(" ", "-").replace("_", "-")
+
+
+def _coverage_report(query: str, query_type: str, technique_reports: list, **extra) -> dict:
+    covered = [r for r in technique_reports if r["coverage"] == "covered"]
+    partial = [r for r in technique_reports if r["coverage"] == "partial"]
+    gap = [r for r in technique_reports if r["coverage"] == "gap"]
+    total = len(technique_reports)
+
+    report = {
+        "query": query,
+        "query_type": query_type,
+        "summary": {
+            "total_techniques": total,
+            "covered": len(covered),
+            "partial": len(partial),
+            "gap": len(gap),
+            "coverage_percent": round(len(covered) / total * 100, 1) if total else 0.0,
+        },
+        "covered_techniques": covered,
+        "partial_techniques": partial,
+        "gap_techniques": gap,
+    }
+    report.update(extra)
+    return report
+
+
+@mcp.tool()
+def analyze_coverage(identifier: str) -> dict:
+    """Analyze Sigma rule coverage for an ATT&CK technique ID or tactic name.
+
+    For a technique ID (e.g. "T1003" or "T1003.001"), reports coverage for
+    that technique and, if it has sub-techniques, each sub-technique. For a
+    tactic name (e.g. "credential-access" or "Lateral Movement"), reports
+    coverage for every technique under that tactic. Coverage per technique is
+    "covered", "partial", or "gap" -- see detection://attack/techniques/{id}
+    for the exact rules. Rule matching only considers custom rules under
+    rules/, not the vendored builtin Hayabusa rule set.
+
+    Args:
+        identifier: An ATT&CK technique ID or a tactic name/slug.
+    """
+    identifier = identifier.strip()
+    if not identifier:
+        raise ToolError("identifier must not be empty.")
+
+    techniques = _load_attack_techniques()
+    normalized_technique = _normalize_technique_id(identifier).upper()
+
+    if normalized_technique in techniques:
+        try:
+            assessment = _assess_technique_coverage(identifier)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+
+        if assessment["sub_techniques"]:
+            technique_reports = [
+                {
+                    "technique_id": sub_id,
+                    "name": techniques[sub_id]["name"],
+                    "coverage": assessment["sub_technique_coverage"][sub_id],
+                    "matching_rules": sorted(
+                        rule["rule_name"]
+                        for rule in _find_custom_rules_by_technique(sub_id.lower())
+                    ),
+                }
+                for sub_id in assessment["sub_techniques"]
+            ]
+        else:
+            technique_reports = [
+                {
+                    "technique_id": assessment["attack_id"],
+                    "name": assessment["name"],
+                    "coverage": assessment["coverage"],
+                    "matching_rules": sorted(
+                        rule["rule_name"] for rule in assessment["matching_rules"]
+                    ),
+                }
+            ]
+
+        return _coverage_report(
+            identifier, "technique", technique_reports, technique=assessment
+        )
+
+    slug = _normalize_tactic_slug(identifier)
+    known_tactics = _load_known_tactics()
+    if slug not in known_tactics:
+        message = (
+            f"{identifier!r} is not a recognized ATT&CK technique ID or tactic name. "
+            f"Known tactics: {', '.join(sorted(known_tactics))}."
+        )
+        hint = LEGACY_TACTIC_HINTS.get(slug)
+        if hint:
+            message += f" {hint}"
+        raise ToolError(message)
+
+    technique_reports = []
+    for attack_id, entry in techniques.items():
+        if slug not in entry.get("tactics", []):
+            continue
+        parent = entry.get("parent_technique")
+        if entry["is_subtechnique"] and parent in techniques and slug in techniques[parent].get("tactics", []):
+            # Counted via its parent's roll-up below instead, to avoid double-counting.
+            continue
+
+        if entry["sub_techniques"]:
+            matches = sorted({
+                rule["rule_name"]
+                for sub_id in entry["sub_techniques"]
+                for rule in _find_custom_rules_by_technique(sub_id.lower())
+            })
+        else:
+            matches = sorted(
+                rule["rule_name"] for rule in _find_custom_rules_by_technique(attack_id.lower())
+            )
+
+        assessment = _assess_technique_coverage(attack_id)
+        technique_reports.append({
+            "technique_id": attack_id,
+            "name": entry["name"],
+            "coverage": assessment["coverage"],
+            "matching_rules": matches,
+        })
+
+    technique_reports.sort(key=lambda r: r["technique_id"])
+    return _coverage_report(identifier, "tactic", technique_reports, tactic=slug)
 
 
 def main() -> None:

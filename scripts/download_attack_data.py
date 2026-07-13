@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Downloads the MITRE ATT&CK Enterprise STIX bundle and extracts a compact
-technique index (id, name, description, sub-technique relationships) to
-./attack/enterprise-attack-techniques.json. Safe to re-run to refresh.
+technique index (id, name, description, sub-technique relationships, tactics)
+to ./attack/enterprise-attack-techniques.json. Safe to re-run to refresh.
 
 The raw STIX bundle is ~50MB and includes malware, tools, mitigations, and
 thousands of relationship objects we don't need; only the ~850 attack-pattern
@@ -37,6 +37,11 @@ def extract_techniques(stix_objects: list) -> dict:
             continue
 
         is_subtechnique = bool(obj.get("x_mitre_is_subtechnique"))
+        tactics = sorted({
+            phase["phase_name"]
+            for phase in obj.get("kill_chain_phases", [])
+            if phase.get("kill_chain_name") == "mitre-attack"
+        })
         techniques[attack_id] = {
             "name": obj.get("name"),
             "description": obj.get("description"),
@@ -44,6 +49,7 @@ def extract_techniques(stix_objects: list) -> dict:
             "is_subtechnique": is_subtechnique,
             "parent_technique": attack_id.split(".")[0] if is_subtechnique else None,
             "sub_techniques": [],
+            "tactics": tactics,
         }
 
     for attack_id, entry in techniques.items():
