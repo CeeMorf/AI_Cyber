@@ -1,0 +1,53 @@
+playbook_id: dcsync
+title: DCSync -- Directory Replication Credential Theft
+severity: critical
+summary: >
+    Detects abuse of Active Directory replication rights
+    (DS-Replication-Get-Changes / DS-Replication-Get-Changes-All) by a
+    non-Domain-Controller principal to pull password hashes -- including
+    krbtgt -- directly from a Domain Controller without code execution on it.
+attack_techniques:
+    - T1003.006
+related_rules:
+    - security_dcsync_replication_rights
+alert_aliases:
+    - dcsync
+    - lsadump::dcsync
+    - secretsdump
+    - replication rights abuse
+
+triage:
+    - Identify the account that performed the replication request and confirm it is not a legitimate Domain Controller machine account or an authorized replication service (e.g. Azure AD Connect, a backup/DR solution).
+    - Determine how that account was granted replication rights -- was this a known/expected delegation, or does it indicate a privilege-escalation or ACL-tampering attack?
+    - This is a Tier-0 event by default -- treat as a suspected domain compromise until proven otherwise.
+
+investigation:
+    - "Review the account's recent activity and privilege history: was it recently added to a privileged group, or did its AD object ACL change (added DS-Replication-Get-Changes rights directly)?"
+    - Identify the source host/IP the replication request came from and investigate it for signs of compromise (this is often run remotely via Impacket's secretsdump.py without any code execution on the DC itself).
+    - Determine the scope of the replication request -- a full-domain sync versus targeted objects (e.g. just krbtgt) both indicate credential theft, but scope affects blast radius.
+    - Check for related credential-theft or privilege-escalation alerts on the source host/account in the preceding hours.
+
+containment:
+    - Disable the abusing account immediately; if it's a compromised legitimate account, force a credential reset and revoke all active sessions/tickets.
+    - Remove any unauthorized DS-Replication-Get-Changes / DS-Replication-Get-Changes-All grants from the account's AD object ACL.
+    - Isolate the source host the request originated from.
+
+eradication:
+    - Assume krbtgt and all domain credentials are compromised; this is the standard assumption after a confirmed DCSync.
+    - Hunt for Golden Ticket usage and other krbtgt-hash-dependent attacks following the event.
+    - Identify and remove the mechanism that granted the attacker replication rights in the first place (e.g. prior AD ACL abuse, an over-privileged service account, or a compromised Tier-0 admin).
+
+recovery:
+    - Reset the krbtgt password twice (per Microsoft's guidance, with the appropriate replication delay between resets) to invalidate all existing Kerberos tickets.
+    - Reset credentials for all privileged accounts as a precaution.
+    - Conduct a full AD ACL/permissions audit to catch any other unauthorized replication-rights grants.
+
+false_positives:
+    - "Legitimate replication services: Azure AD Connect, Microsoft Entra Connect, third-party AD backup/DR tools, and secondary Domain Controllers performing normal replication (these should already run as DC machine accounts and be excluded by the rule's filter)."
+    - Newly promoted or renamed Domain Controllers not yet reflected in exclusion lists.
+
+escalation_criteria:
+    - Always -- this technique has no benign default case for a non-DC, non-replication-service principal. Escalate immediately as a suspected domain compromise.
+
+references:
+    - https://attack.mitre.org/techniques/T1003/006/

@@ -1,0 +1,55 @@
+playbook_id: pass-the-hash
+title: Pass-the-Hash Lateral Movement
+severity: high
+summary: >
+    Detects use of a stolen NTLM hash to authenticate as a user without
+    knowing their plaintext password, via Mimikatz's sekurlsa::pth or an
+    anomalous NTLM network logon -- a common lateral-movement technique
+    following credential theft.
+attack_techniques:
+    - T1550.002
+related_rules:
+    - proc_creation_pth_mimikatz_command_line
+    - security_pass_the_hash_ntlm_anomaly
+alert_aliases:
+    - pass the hash
+    - pth
+    - mimikatz sekurlsa::pth
+    - ntlm anomaly
+    - zero key length logon
+
+triage:
+    - Identify the target account being authenticated as, and the source host/IP the logon originated from.
+    - Determine whether the source host has a recent credential-theft alert (LSASS access, DCSync) -- pass-the-hash is almost always a follow-on stage.
+    - Check whether the target account is privileged (Domain Admin, service account, local admin on multiple hosts).
+
+investigation:
+    - "Trace the logon session (Logon ID) on the target host forward: what did the attacker do after authenticating (file access, process creation, further lateral movement)?"
+    - Correlate the timestamp with any credential-dumping alert on the presumed source host to build the attack chain.
+    - Check whether the same source host authenticated as the same account against other hosts in the same time window -- indicates automated/scripted lateral movement (e.g. CrackMapExec, Impacket).
+    - Review the spawned process (for the Mimikatz command-line variant) for its full command line and any child processes it launched under the impersonated identity.
+
+containment:
+    - Isolate both the source host (likely already compromised) and monitor/restrict the target host.
+    - Force-expire the impersonated account's password and any active Kerberos tickets/sessions for it.
+    - Block the source host's access to sensitive shares/systems while investigation continues.
+
+eradication:
+    - Remove the credential-dumping tooling and any implants on the source host (see the credential-theft playbook).
+    - Identify and remediate every host the stolen hash was used against.
+
+recovery:
+    - Rotate the impersonated account's credentials and any credentials cached on hosts it touched during the intrusion.
+    - Review and tighten local admin password reuse across the environment (LAPS or equivalent) -- hash reuse across many hosts is what makes pass-the-hash effective at scale.
+
+false_positives:
+    - Legitimate NTLM fallback for older applications/services that don't support Kerberos; confirm the Key Length field pattern and source-host reputation before escalating.
+    - Some backup/scanning tools authenticate via NTLM by design -- verify against a known-service allowlist.
+
+escalation_criteria:
+    - The impersonated account is privileged or has access to multiple hosts.
+    - Evidence of automated tooling (CrackMapExec/Impacket-style command patterns) rather than a single manual logon.
+    - The source host also has a confirmed credential-dumping event.
+
+references:
+    - https://attack.mitre.org/techniques/T1550/002/

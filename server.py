@@ -21,6 +21,7 @@ HAYABUSA_BIN = HAYABUSA_DIR / ("hayabusa.exe" if platform.system() == "Windows" 
 BUILTIN_RULES_DIR = HAYABUSA_DIR / "rules"
 RULES_CONFIG_DIR = BUILTIN_RULES_DIR / "config"
 CUSTOM_RULES_DIR = REPO_ROOT / "rules"
+PLAYBOOKS_DIR = REPO_ROOT / "playbooks"
 
 # Compact technique index built by scripts/download_attack_data.py from the
 # MITRE ATT&CK Enterprise STIX bundle (~50MB raw; this keeps just id, name,
@@ -398,6 +399,144 @@ def get_rules_by_technique(technique_id: str) -> dict:
         "normalized_technique_id": technique,
         "total_rule_count": len(rules),
         "rules": rules,
+    }
+
+
+def _iter_playbook_files():
+    if not PLAYBOOKS_DIR.exists():
+        return
+    for path in sorted(PLAYBOOKS_DIR.rglob("*.yml")):
+        if ".git" in path.parts:
+            continue
+        yield path
+
+
+def _playbook_name(path: Path) -> str:
+    return path.relative_to(PLAYBOOKS_DIR).with_suffix("").as_posix()
+
+
+def _lookup_custom_rule(rule_name: str) -> dict | None:
+    for path in _iter_custom_rule_files():
+        if _custom_rule_name(path) == rule_name:
+            rule = _parse_rule_metadata(path)
+            return None if rule is None else {"rule_name": rule_name, **rule}
+    return None
+
+
+def _parse_playbook(path: Path) -> dict | None:
+    try:
+        with path.open(encoding="utf-8") as f:
+            data = yaml.load(f, Loader=_YAML_LOADER)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(data, dict) or "title" not in data:
+        return None
+
+    related_rules = []
+    for rule_name in data.get("related_rules") or []:
+        rule = _lookup_custom_rule(rule_name)
+        related_rules.append(rule if rule is not None else {"rule_name": rule_name, "rule_missing": True})
+
+    return {
+        "playbook_name": _playbook_name(path),
+        "playbook_id": data.get("playbook_id"),
+        "title": data.get("title"),
+        "severity": data.get("severity"),
+        "summary": data.get("summary"),
+        "attack_techniques": data.get("attack_techniques") or [],
+        "alert_aliases": data.get("alert_aliases") or [],
+        "related_rules": related_rules,
+        "triage": data.get("triage") or [],
+        "investigation": data.get("investigation") or [],
+        "containment": data.get("containment") or [],
+        "eradication": data.get("eradication") or [],
+        "recovery": data.get("recovery") or [],
+        "false_positives": data.get("false_positives") or [],
+        "escalation_criteria": data.get("escalation_criteria") or [],
+        "references": data.get("references") or [],
+        "playbook_path": str(path.relative_to(REPO_ROOT)),
+    }
+
+
+@mcp.resource("detection://playbooks", mime_type="application/json")
+def list_playbooks() -> dict:
+    """List all incident response playbooks available under playbooks/ (summary metadata only)."""
+    playbooks = []
+    for path in _iter_playbook_files():
+        playbook = _parse_playbook(path)
+        if playbook is None:
+            continue
+        playbooks.append({
+            "playbook_name": playbook["playbook_name"],
+            "playbook_id": playbook["playbook_id"],
+            "title": playbook["title"],
+            "severity": playbook["severity"],
+            "summary": playbook["summary"],
+            "attack_techniques": playbook["attack_techniques"],
+            "related_rule_count": len(playbook["related_rules"]),
+            "playbook_path": playbook["playbook_path"],
+        })
+
+    return {
+        "total_playbook_count": len(playbooks),
+        "playbooks": playbooks,
+    }
+
+
+@mcp.resource("detection://playbooks/{playbook_name}", mime_type="application/json")
+def get_playbook(playbook_name: str) -> dict:
+    """Get a specific incident response playbook's full content by name (e.g. "credential-theft")."""
+    for path in _iter_playbook_files():
+        if _playbook_name(path) == playbook_name:
+            playbook = _parse_playbook(path)
+            if playbook is None:
+                raise ValueError(f"Playbook file is malformed: {playbook_name!r}")
+            return playbook
+    raise ValueError(f"Playbook not found: {playbook_name!r}")
+
+
+def _playbook_matches_alert(playbook: dict, needle: str) -> bool:
+    for alias in playbook["alert_aliases"]:
+        alias_lower = alias.lower()
+        if needle in alias_lower or alias_lower in needle:
+            return True
+    for rule in playbook["related_rules"]:
+        if needle == str(rule.get("rule_name", "")).lower():
+            return True
+        title = str(rule.get("title", "")).lower()
+        if title and needle in title:
+            return True
+    return False
+
+
+@mcp.resource("detection://playbooks/by-alert/{alert_name}", mime_type="application/json")
+def get_playbooks_by_alert(alert_name: str) -> dict:
+    """Find incident response playbook(s) relevant to a given alert or rule name.
+
+    Matches case-insensitively against each playbook's declared alert
+    aliases and its related custom rules' names/titles, e.g. "lsass dump",
+    "DCSync", or an exact rule name like "security_dcsync_replication_rights".
+    Returns an empty match list (not an error) if nothing matches.
+    """
+    needle = alert_name.strip().lower()
+    matches = []
+    for path in _iter_playbook_files():
+        playbook = _parse_playbook(path)
+        if playbook is None:
+            continue
+        if _playbook_matches_alert(playbook, needle):
+            matches.append({
+                "playbook_name": playbook["playbook_name"],
+                "title": playbook["title"],
+                "severity": playbook["severity"],
+                "summary": playbook["summary"],
+                "attack_techniques": playbook["attack_techniques"],
+            })
+
+    return {
+        "alert_name": alert_name,
+        "match_count": len(matches),
+        "matches": matches,
     }
 
 

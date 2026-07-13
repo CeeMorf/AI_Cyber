@@ -1,0 +1,51 @@
+playbook_id: kerberoasting
+title: Kerberoasting -- Service Account Ticket Cracking
+severity: medium
+summary: >
+    Detects a Kerberos TGS ticket request that succeeds using the legacy
+    RC4-HMAC encryption type, indicating an attacker is harvesting service
+    account tickets to crack offline and recover the plaintext service
+    account password.
+attack_techniques:
+    - T1558.003
+related_rules:
+    - security_kerberoasting_rc4_ticket
+alert_aliases:
+    - kerberoasting
+    - rc4 service ticket
+    - tgs-req rc4
+    - rubeus kerberoast
+
+triage:
+    - Identify the requesting account and the service account (SPN) targeted; a single account requesting many distinct service tickets in a short window is a strong Kerberoasting indicator.
+    - Check whether the targeted service account has a weak/reused/never-rotated password -- this determines how exploitable a successful crack would be.
+    - Determine whether RC4 is expected in this environment (legacy app/service) or genuinely anomalous.
+
+investigation:
+    - Pull all EventID 4769 (Kerberos Service Ticket) events for the requesting account over the preceding hour to determine request volume and the list of targeted SPNs -- a burst against many SPNs from one account/host indicates automated tooling (Rubeus, Invoke-Kerberoast).
+    - Correlate with process-creation or PowerShell ScriptBlock logs on the requesting host for Kerberoasting tooling indicators.
+    - Check whether any of the targeted service accounts subsequently show a successful logon from an unexpected host/IP, which would indicate the offline crack succeeded.
+
+containment:
+    - If tooling use is confirmed, isolate the requesting host and disable the requesting account pending investigation.
+    - Force a password reset for any targeted service account with a weak password, prioritizing accounts with high privilege (Domain Admin-equivalent service accounts are prime Kerberoasting targets).
+
+eradication:
+    - Remove any Kerberoasting tooling found on the requesting host.
+    - Where feasible, migrate targeted service accounts to Group Managed Service Accounts (gMSA), which use long random passwords and aren't practically crackable.
+
+recovery:
+    - Reset passwords for all targeted service accounts to long, random values.
+    - Enforce AES-only Kerberos encryption where legacy application support allows, to remove the RC4 attack surface entirely.
+
+false_positives:
+    - Legacy applications or service accounts that don't support AES and are expected to use RC4 -- baseline these accounts and tune the rule's filters accordingly.
+    - Routine service ticket renewal for already-known, expected service accounts.
+
+escalation_criteria:
+    - High request volume against many distinct SPNs from a single account/host in a short window.
+    - Any targeted service account is privileged or has a known-weak password.
+    - A targeted service account authenticates from an unexpected source shortly after being targeted.
+
+references:
+    - https://attack.mitre.org/techniques/T1558/003/
