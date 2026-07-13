@@ -23,6 +23,7 @@ RULES_CONFIG_DIR = BUILTIN_RULES_DIR / "config"
 CUSTOM_RULES_DIR = REPO_ROOT / "rules"
 PLAYBOOKS_DIR = REPO_ROOT / "playbooks"
 ENVIRONMENT_DIR = REPO_ROOT / "environment"
+INVESTIGATIONS_DIR = REPO_ROOT / "investigations"
 
 # Compact technique index built by scripts/download_attack_data.py from the
 # MITRE ATT&CK Enterprise STIX bundle (~50MB raw; this keeps just id, name,
@@ -581,6 +582,158 @@ def get_environment_baselines() -> dict:
     environment's telemetry.
     """
     return _load_environment_file("baselines.yml")
+
+
+def _iter_investigation_files():
+    if not INVESTIGATIONS_DIR.exists():
+        return
+    for path in sorted(INVESTIGATIONS_DIR.rglob("*.yml")):
+        if ".git" in path.parts:
+            continue
+        yield path
+
+
+def _investigation_case_id(path: Path) -> str:
+    return path.relative_to(INVESTIGATIONS_DIR).with_suffix("").as_posix()
+
+
+def _lookup_playbook_summary(playbook_name: str) -> dict | None:
+    for path in _iter_playbook_files():
+        if _playbook_name(path) == playbook_name:
+            playbook = _parse_playbook(path)
+            if playbook is None:
+                return None
+            return {
+                "playbook_name": playbook["playbook_name"],
+                "title": playbook["title"],
+                "severity": playbook["severity"],
+            }
+    return None
+
+
+def _iso_date(value):
+    # YAML parses unquoted "2026-03-04"-style dates into datetime.date objects,
+    # which aren't JSON-serializable on their own -- normalize to plain strings.
+    return value.isoformat() if hasattr(value, "isoformat") else value
+
+
+def _parse_investigation(path: Path) -> dict | None:
+    try:
+        with path.open(encoding="utf-8") as f:
+            data = yaml.load(f, Loader=_YAML_LOADER)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(data, dict) or "title" not in data:
+        return None
+
+    related_rules = []
+    for rule_name in data.get("related_rules") or []:
+        rule = _lookup_custom_rule(rule_name)
+        related_rules.append(rule if rule is not None else {"rule_name": rule_name, "rule_missing": True})
+
+    related_playbooks = []
+    for playbook_name in data.get("related_playbooks") or []:
+        playbook = _lookup_playbook_summary(playbook_name)
+        related_playbooks.append(
+            playbook if playbook is not None else {"playbook_name": playbook_name, "playbook_missing": True}
+        )
+
+    return {
+        "case_id": _investigation_case_id(path),
+        "title": data.get("title"),
+        "status": data.get("status"),
+        "severity": data.get("severity"),
+        "opened": _iso_date(data.get("opened")),
+        "closed": _iso_date(data.get("closed")),
+        "analyst": data.get("analyst"),
+        "attack_techniques": data.get("attack_techniques") or [],
+        "affected_hosts": data.get("affected_hosts") or [],
+        "summary": data.get("summary"),
+        "related_rules": related_rules,
+        "related_playbooks": related_playbooks,
+        "timeline": data.get("timeline") or [],
+        "findings": data.get("findings") or [],
+        "root_cause": data.get("root_cause"),
+        "remediation": data.get("remediation") or [],
+        "lessons_learned": data.get("lessons_learned") or [],
+        "references": data.get("references") or [],
+        "example_data": data.get("example_data", False),
+        "note": data.get("note"),
+        "case_path": str(path.relative_to(REPO_ROOT)),
+    }
+
+
+@mcp.resource("detection://investigations", mime_type="application/json")
+def list_investigations() -> dict:
+    """List all past investigation cases in investigations/ (summary metadata only).
+
+    Placeholder/example cases by default (see each case's "example_data" and
+    "note" fields) -- replace them with real case notes from your own
+    incident history.
+    """
+    cases = []
+    for path in _iter_investigation_files():
+        case = _parse_investigation(path)
+        if case is None:
+            continue
+        cases.append({
+            "case_id": case["case_id"],
+            "title": case["title"],
+            "status": case["status"],
+            "severity": case["severity"],
+            "opened": case["opened"],
+            "closed": case["closed"],
+            "attack_techniques": case["attack_techniques"],
+            "affected_hosts": case["affected_hosts"],
+            "summary": case["summary"],
+            "example_data": case["example_data"],
+            "case_path": case["case_path"],
+        })
+
+    return {
+        "total_case_count": len(cases),
+        "cases": cases,
+    }
+
+
+@mcp.resource("detection://investigations/{case_id}", mime_type="application/json")
+def get_investigation(case_id: str) -> dict:
+    """Get a specific past investigation case's full details by case ID (e.g. "INV-2026-014")."""
+    for path in _iter_investigation_files():
+        if _investigation_case_id(path) == case_id:
+            case = _parse_investigation(path)
+            if case is None:
+                raise ValueError(f"Investigation case file is malformed: {case_id!r}")
+            return case
+    raise ValueError(f"Investigation case not found: {case_id!r}")
+
+
+@mcp.resource("detection://investigations/by-technique/{technique_id}", mime_type="application/json")
+def get_investigations_by_technique(technique_id: str) -> dict:
+    """List past investigation cases tagged with a given ATT&CK technique ID (e.g. "T1003.001" or "T1003")."""
+    technique = _normalize_technique_id(technique_id)
+    cases = []
+    for path in _iter_investigation_files():
+        case = _parse_investigation(path)
+        if case is None:
+            continue
+        tags = [f"attack.{tid.lower()}" for tid in case["attack_techniques"]]
+        if not _rule_matches_technique(tags, technique):
+            continue
+        cases.append({
+            "case_id": case["case_id"],
+            "title": case["title"],
+            "status": case["status"],
+            "severity": case["severity"],
+            "attack_techniques": case["attack_techniques"],
+        })
+
+    return {
+        "technique_id": technique_id,
+        "normalized_technique_id": technique,
+        "total_case_count": len(cases),
+        "cases": cases,
+    }
 
 
 def _assess_technique_coverage(technique_id: str) -> dict:

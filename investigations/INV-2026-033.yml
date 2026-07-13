@@ -1,0 +1,47 @@
+example_data: true
+note: >
+    Placeholder investigation case for demonstration purposes only. Replace
+    with real case notes from your own incident history.
+title: DCSync Replication Request from Compromised IT Admin Account
+status: monitoring
+severity: critical
+opened: 2026-05-27
+closed: null
+analyst: R. Chen / J. Alvarez (joint)
+attack_techniques:
+    - T1003.006
+related_rules:
+    - security_dcsync_replication_rights
+related_playbooks:
+    - dcsync
+affected_hosts:
+    - DC01
+    - JMP01
+summary: >
+    security_dcsync_replication_rights fired for a directory replication
+    request using DS-Replication-Get-Changes-All rights from an IT
+    Infrastructure admin account, originating from JMP01 rather than a
+    Domain Controller machine account. Per the dcsync playbook's escalation
+    criterion (always escalate), this was immediately treated as a suspected
+    domain compromise.
+timeline:
+    - "2026-05-27T22:04:00Z -- Alert fired: security_dcsync_replication_rights, account admin_jalvarez requests full replication from DC01"
+    - "2026-05-27T22:06:00Z -- Escalated immediately per playbook; admin_jalvarez account disabled and all active sessions revoked"
+    - "2026-05-27T22:40:00Z -- Confirmed with the account owner this activity was not performed by them; account shows a suspicious interactive logon to JMP01 nine minutes prior to the replication request"
+    - "2026-05-28T01:15:00Z -- krbtgt password reset (first of two required resets) initiated"
+    - "2026-05-28T14:00:00Z -- Second krbtgt reset completed after the AD replication convergence window"
+    - "2026-05-29T00:00:00Z -- Full privileged-account credential rotation completed domain-wide"
+findings:
+    - "Root cause of the admin_jalvarez compromise is still under investigation -- suspected credential reuse from a personal account breach, pending confirmation from the account owner."
+    - "No confirmed evidence yet that replicated data was exfiltrated; request timing suggests it may have been blocked in time."
+    - "JMP01 itself shows no signs of compromise; the activity appears solely due to the stolen admin credential, not a JMP01-resident implant."
+root_cause: Under investigation -- likely credential reuse or phishing against the admin account owner, not yet confirmed.
+remediation:
+    - "krbtgt rotated twice; all privileged credentials rotated domain-wide."
+    - "Enforced MFA on all IT Infrastructure admin accounts for interactive logons to JMP01 (previously password-only)."
+    - "Case remains open in monitoring status pending root-cause confirmation and a follow-up review of JMP01 access logs for the preceding 30 days."
+lessons_learned:
+    - "The 'always escalate' rule for DCSync-pattern alerts avoided any delay in this case -- treating ambiguous severity as critical by default was the right call here."
+    - "Admin accounts lacked MFA on the jump host prior to this incident; that was the actual gap that allowed a single stolen credential to reach Tier-0 replication rights."
+references:
+    - https://attack.mitre.org/techniques/T1003/006/

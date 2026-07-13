@@ -1,0 +1,50 @@
+example_data: true
+note: >
+    Placeholder investigation case for demonstration purposes only. Replace
+    with real case notes from your own incident history.
+title: LSASS Memory Dump via comsvcs.dll on End-User Workstation
+status: closed
+severity: high
+opened: 2026-04-18
+closed: 2026-04-19
+analyst: R. Chen
+attack_techniques:
+    - T1003.001
+    - T1218.011
+related_rules:
+    - proc_creation_lsass_dump_comsvcs
+    - proc_access_lsass_memory_read
+related_playbooks:
+    - credential-theft
+affected_hosts:
+    - WKS-2210
+summary: >
+    proc_creation_lsass_dump_comsvcs fired for a rundll32.exe invocation of
+    comsvcs.dll's MiniDump export against lsass.exe on WKS-2210, a standard
+    end-user workstation. Per the environment baseline, LSASS-adjacent
+    tooling is only expected to run from the JMP01 admin jump host, so the
+    workstation source alone was treated as high-confidence malicious
+    without waiting on further corroboration.
+timeline:
+    - "2026-04-18T16:47:00Z -- Alert fired: proc_creation_lsass_dump_comsvcs on WKS-2210"
+    - "2026-04-18T16:49:00Z -- Analyst checks detection://environment/baselines: LSASS tooling baseline states JMP01-only; WKS-2210 does not match -- escalated immediately per the credential-theft playbook's triage step"
+    - "2026-04-18T16:55:00Z -- WKS-2210 isolated; parent process identified as a renamed rundll32.exe launched from a temp directory"
+    - "2026-04-18T17:30:00Z -- Dump file located and deleted before any indication of exfiltration (no outbound transfer observed in the isolation window)"
+    - "2026-04-19T10:00:00Z -- All accounts with sessions on WKS-2210 in the prior 30 days force-reset as a precaution; host reimaged"
+findings:
+    - "No successful use of the dumped credentials was observed elsewhere in the environment during the investigation window."
+    - "Initial access was a malicious macro-enabled document; the delivery mechanism is tracked separately under the phishing-response process."
+    - "The renamed rundll32.exe evaded a naive process-name allowlist but not the comsvcs.dll argument-based detection rule."
+root_cause: >
+    Malicious document execution on a standard workstation led directly to
+    credential-dumping tooling within minutes, with no intermediate
+    reconnaissance stage observed.
+remediation:
+    - "No changes needed to the detection rule itself -- it performed as designed."
+    - "Reinforced with end users that WKS-2210's user account should not have local admin rights; removed local admin group membership post-incident."
+lessons_learned:
+    - "The JMP01-only baseline made this an immediate, high-confidence escalation rather than a multi-step investigation -- the clearest example so far of environment baselines directly shortening time-to-containment."
+    - "Consider alerting on comsvcs.dll MiniDump activity from any non-JMP01 host at a higher default severity than the rule's current 'critical' -- arguably already appropriate, but worth confirming SOC tuning reflects this."
+references:
+    - https://attack.mitre.org/techniques/T1003/001/
+    - https://attack.mitre.org/techniques/T1218/011/

@@ -1,0 +1,55 @@
+example_data: true
+note: >
+    Placeholder investigation case for demonstration purposes only. Replace
+    with real case notes from your own incident history.
+title: Kerberoasting Against SQL Service Account Followed by Attempted Pass-the-Hash
+status: closed
+severity: high
+opened: 2026-03-04
+closed: 2026-03-06
+analyst: R. Chen
+attack_techniques:
+    - T1558.003
+    - T1550.002
+related_rules:
+    - security_kerberoasting_rc4_ticket
+    - security_pass_the_hash_ntlm_anomaly
+related_playbooks:
+    - kerberoasting
+    - pass-the-hash
+affected_hosts:
+    - SQL01
+    - WKS-4471
+summary: >
+    security_kerberoasting_rc4_ticket fired for a burst of RC4-encrypted TGS
+    requests from WKS-4471 against multiple SPNs, including the primary
+    application database service account. The cracked hash was later used
+    in an attempted NTLM logon (flagged by security_pass_the_hash_ntlm_anomaly)
+    against SQL01, which failed due to the account's logon-type restriction.
+    No successful lateral movement occurred.
+timeline:
+    - "2026-03-04T14:02:00Z -- Alert fired: security_kerberoasting_rc4_ticket, WKS-4471 requests RC4 TGS for 6 distinct SPNs within 90 seconds"
+    - "2026-03-04T14:20:00Z -- Analyst confirms WKS-4471 has no legitimate reason to request service tickets in bulk; PowerShell ScriptBlock logs show Invoke-Kerberoast usage"
+    - "2026-03-04T14:45:00Z -- WKS-4471 isolated from network; requesting user account disabled pending investigation"
+    - "2026-03-05T09:10:00Z -- Alert fired: security_pass_the_hash_ntlm_anomaly, svc_sql_app -> SQL01, NTLM logon failed (account restricted to interactive logon type only)"
+    - "2026-03-05T09:30:00Z -- Confirmed the failed logon used the same account targeted in the Kerberoasting burst; attacker had cracked the RC4 ticket offline and attempted to reuse the password directly"
+    - "2026-03-06T11:00:00Z -- svc_sql_app password rotated and migrated to a gMSA; case closed"
+findings:
+    - "Initial access vector was a phishing email opened on WKS-4471 the prior day (confirmed via mail gateway logs, tracked separately)."
+    - "svc_sql_app had a weak, unrotated password dating back over a year -- the root enabler for the successful crack."
+    - "The account's logon-type restriction (no network logon) prevented the pass-the-hash attempt from succeeding despite the attacker having a valid password."
+root_cause: >
+    A weak, long-lived service account password combined with unrestricted
+    RC4 Kerberos encryption allowed an attacker with a single compromised
+    workstation to obtain crackable credentials for a high-value service
+    account.
+remediation:
+    - "Migrated svc_sql_app to a Group Managed Service Account (gMSA)."
+    - "Enforced AES-only Kerberos encryption for all service accounts domain-wide; documented as a baseline in environment/baselines.yml."
+    - "Reimaged WKS-4471 and reset the affected user's credentials."
+lessons_learned:
+    - "The account's logon-type restriction was an effective, low-cost control that stopped this from becoming a full compromise -- worth applying to other high-value service accounts."
+    - "The two alerts fired 19 hours apart; a correlation rule linking Kerberoasting followed by pass-the-hash against the same account would have shortened detection-to-containment time."
+references:
+    - https://attack.mitre.org/techniques/T1558/003/
+    - https://attack.mitre.org/techniques/T1550/002/

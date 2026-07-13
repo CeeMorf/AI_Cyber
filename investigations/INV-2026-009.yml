@@ -1,0 +1,43 @@
+example_data: true
+note: >
+    Placeholder investigation case for demonstration purposes only. Replace
+    with real case notes from your own incident history.
+title: NTLM Anomaly Alert on Backup Service Account -- False Positive
+status: closed
+severity: low
+opened: 2026-02-11
+closed: 2026-02-11
+analyst: J. Alvarez
+attack_techniques:
+    - T1550.002
+related_rules:
+    - security_pass_the_hash_ntlm_anomaly
+related_playbooks:
+    - pass-the-hash
+affected_hosts:
+    - FS01
+    - JMP01
+summary: >
+    security_pass_the_hash_ntlm_anomaly fired for svc_backup authenticating
+    to FS01 with NTLM and a zero Key Length at 02:14 local time.
+    Investigation confirmed this matched the documented backup-service
+    baseline (nightly NTLM logon from JMP01) and was not malicious.
+timeline:
+    - "2026-02-11T02:14:00Z -- Alert fired: security_pass_the_hash_ntlm_anomaly, svc_backup -> FS01"
+    - "2026-02-11T08:30:00Z -- Analyst reviews environment baselines, finds matching documented backup-service NTLM pattern"
+    - "2026-02-11T09:05:00Z -- Confirmed source host is JMP01 (expected), no unusual process activity on either host; closed as false positive"
+findings:
+    - "Source host JMP01 matches the documented backup-service baseline exactly (see detection://environment/baselines)."
+    - "No credential-theft precursor alert on JMP01 in the preceding 24 hours."
+    - "Backup job scheduler logs confirm a legitimate scheduled backup run at the same timestamp."
+root_cause: >
+    Expected legacy NTLM authentication by the backup service; not a
+    security incident. The underlying rule is working as intended -- this
+    alert type is inherently noisy without environment context.
+remediation:
+    - "Documented the baseline explicitly in environment/baselines.yml so future analysts can triage this pattern in under a minute."
+    - "Opened a backlog item to migrate the backup agent to Kerberos-only authentication, which would eliminate this alert class entirely."
+lessons_learned:
+    - "Environment baselines materially speed up triage for expected-but-alertable service behavior; without one, this took over 45 minutes to close."
+    - "Consider a rule-level exclusion for JMP01 + svc_backup + the known time window, rather than relying on a manual baseline lookup each time."
+references: []
