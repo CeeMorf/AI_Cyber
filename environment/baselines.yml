@@ -1,0 +1,26 @@
+example_data: true
+note: >
+    Placeholder "normal behavior" baselines for demonstration purposes only.
+    Replace the entries below with baselines derived from your real
+    environment's telemetry before using this data to triage alerts.
+baselines:
+    - subject: Backup Service Account (svc_backup)
+      behavior: "Authenticates via NTLM (not Kerberos) against FS01 and SQL01 nightly between 01:00-03:00 local time, from JMP01 only."
+      relevance: "Explains expected NTLM logon activity that could otherwise look like pass-the-hash outside of a real incident -- see the pass-the-hash playbook's false_positives."
+      related_hosts: [FS01, SQL01, JMP01]
+    - subject: Domain Controller Replication
+      behavior: "DC01 and DC02 replicate with each other continuously via their machine accounts; this is the only expected source of DS-Replication-Get-Changes-All activity."
+      relevance: "Any DS-Replication-Get-Changes(-All) request from a principal other than the DC01$/DC02$ machine accounts is anomalous -- see the dcsync playbook."
+      related_hosts: [DC01, DC02]
+    - subject: IT Infrastructure Admin Tooling
+      behavior: "LSASS-adjacent tooling (Sysinternals procdump, Task Manager memory dumps) is only run by IT admins from JMP01, never directly from end-user workstations."
+      relevance: "LSASS access alerts originating from a standard workstation (WKS-*) rather than JMP01 are higher-confidence indicators of compromise -- see the credential-theft playbook."
+      related_hosts: [JMP01, WKS-*]
+    - subject: Service Account Kerberos Encryption
+      behavior: "All service accounts in this environment are configured for AES-only Kerberos tickets; no legitimate service should request or receive RC4-encrypted service tickets."
+      relevance: "Any RC4 TGS-REP in this environment is anomalous by design, not merely legacy -- raises confidence for the kerberoasting playbook."
+      related_hosts: []
+    - subject: Off-Hours Interactive Logons
+      behavior: "Interactive logons to DC01/DC02/SQL01/FS01 by IT Infrastructure accounts occur only during business hours (07:00-19:00 local) except during scheduled maintenance windows."
+      relevance: "Interactive logons to Tier-0/Tier-1 hosts outside business hours, without a corresponding change ticket, warrant triage regardless of which rule fired."
+      related_hosts: [DC01, DC02, SQL01, FS01]

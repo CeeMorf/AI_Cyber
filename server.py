@@ -22,6 +22,7 @@ BUILTIN_RULES_DIR = HAYABUSA_DIR / "rules"
 RULES_CONFIG_DIR = BUILTIN_RULES_DIR / "config"
 CUSTOM_RULES_DIR = REPO_ROOT / "rules"
 PLAYBOOKS_DIR = REPO_ROOT / "playbooks"
+ENVIRONMENT_DIR = REPO_ROOT / "environment"
 
 # Compact technique index built by scripts/download_attack_data.py from the
 # MITRE ATT&CK Enterprise STIX bundle (~50MB raw; this keeps just id, name,
@@ -538,6 +539,48 @@ def get_playbooks_by_alert(alert_name: str) -> dict:
         "match_count": len(matches),
         "matches": matches,
     }
+
+
+def _load_environment_file(filename: str) -> dict:
+    path = ENVIRONMENT_DIR / filename
+    if not path.exists():
+        raise ValueError(f"Environment data file not found: {filename} (expected at {path})")
+    with path.open(encoding="utf-8") as f:
+        data = yaml.load(f, Loader=_YAML_LOADER)
+    if not isinstance(data, dict):
+        raise ValueError(f"Environment data file is malformed: {filename}")
+    return data
+
+
+@mcp.resource("detection://environment/hosts", mime_type="application/json")
+def get_environment_hosts() -> dict:
+    """Known hosts and their roles in the environment, from environment/hosts.yml.
+
+    Placeholder/example data by default (see the file's "example_data" and
+    "note" fields) -- replace it with your real host inventory.
+    """
+    return _load_environment_file("hosts.yml")
+
+
+@mcp.resource("detection://environment/services", mime_type="application/json")
+def get_environment_services() -> dict:
+    """Critical services in the environment, from environment/services.yml.
+
+    Placeholder/example data by default (see the file's "example_data" and
+    "note" fields) -- replace it with your real service inventory.
+    """
+    return _load_environment_file("services.yml")
+
+
+@mcp.resource("detection://environment/baselines", mime_type="application/json")
+def get_environment_baselines() -> dict:
+    """Normal-behavior baselines for the environment, from environment/baselines.yml.
+
+    Placeholder/example data by default (see the file's "example_data" and
+    "note" fields) -- replace it with baselines derived from your real
+    environment's telemetry.
+    """
+    return _load_environment_file("baselines.yml")
 
 
 def _assess_technique_coverage(technique_id: str) -> dict:

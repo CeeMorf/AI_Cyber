@@ -1,0 +1,36 @@
+example_data: true
+note: >
+    Placeholder critical-service inventory for demonstration purposes only.
+    Replace the entries below with your real service inventory before using
+    this data for actual incident response decisions.
+services:
+    - service_name: Active Directory Domain Services
+      hosts: [DC01, DC02]
+      criticality: tier0
+      description: Core identity and authentication service for the domain; compromise or outage affects the entire environment.
+      owner: IT Infrastructure
+    - service_name: DNS
+      hosts: [DC01, DC02]
+      criticality: tier0
+      description: Internal DNS resolution, co-located with the Domain Controllers.
+      owner: IT Infrastructure
+    - service_name: File Shares (HR/Finance)
+      hosts: [FS01]
+      criticality: tier1
+      description: SMB shares containing sensitive HR and Finance documents.
+      owner: IT Infrastructure
+    - service_name: Primary Application Database
+      hosts: [SQL01]
+      criticality: tier1
+      description: Backing database for the primary business application.
+      owner: Database Team
+    - service_name: Customer-Facing Web Application
+      hosts: [WEB01]
+      criticality: tier1
+      description: Internet-facing application; availability and integrity issues are customer-visible.
+      owner: Application Team
+    - service_name: Backup Service
+      hosts: [FS01, SQL01]
+      criticality: tier1
+      description: "Nightly backup agent (svc_backup) with broad read access across file/database servers; a high-value target if compromised. See detection://environment/baselines for its expected authentication pattern."
+      owner: IT Infrastructure
