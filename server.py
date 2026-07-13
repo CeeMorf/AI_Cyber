@@ -1,8 +1,12 @@
 import json
 import os
 import platform
+import re
 import subprocess
 import tempfile
+import uuid
+from collections import Counter
+from datetime import date
 from pathlib import Path
 
 import yaml
@@ -619,6 +623,240 @@ def analyze_coverage(identifier: str) -> dict:
 
     technique_reports.sort(key=lambda r: r["technique_id"])
     return _coverage_report(identifier, "tactic", technique_reports, tactic=slug)
+
+
+def _iter_builtin_rule_files():
+    if not BUILTIN_RULES_DIR.exists():
+        return
+    for path in BUILTIN_RULES_DIR.rglob("*.yml"):
+        if ".git" in path.parts:
+            continue
+        if RULES_CONFIG_DIR in path.parents:
+            continue
+        yield path
+
+
+def _find_builtin_rules_by_technique(technique: str) -> list:
+    rules = []
+    for path in _iter_builtin_rule_files():
+        rule = _parse_rule_metadata(path)
+        if rule is None or not _rule_matches_technique(rule["tags"], technique):
+            continue
+        rules.append(rule)
+    return rules
+
+
+# Heuristic fallback used only when neither our custom rules nor the entire
+# vendored builtin set (~5000 rules) have anything tagged for a technique --
+# a real gap in the wider Sigma corpus, not just our project. These are
+# rough keyword guesses at a plausible logsource, not a researched detection
+# engineering recommendation; the response always says so explicitly.
+_LOGSOURCE_KEYWORD_HINTS = [
+    (("registry",), {"category": "registry_event", "product": "windows", "service": None}),
+    (("scheduled task", "task scheduler"), {"category": None, "product": "windows", "service": "taskscheduler"}),
+    (("powershell",), {"category": "ps_script", "product": "windows", "service": None}),
+    (("dns",), {"category": "dns_query", "product": "windows", "service": None}),
+    (("network", "traffic", "connection"), {"category": "network_connection", "product": "windows", "service": None}),
+    (("file", "wrote", "written", "dropped"), {"category": "file_event", "product": "windows", "service": None}),
+    (("process", "execute", "execution", "command"), {"category": "process_creation", "product": "windows", "service": None}),
+]
+
+
+def _keyword_logsource_guess(description: str) -> dict:
+    text = (description or "").lower()
+    for keywords, logsource in _LOGSOURCE_KEYWORD_HINTS:
+        if any(keyword in text for keyword in keywords):
+            return logsource
+    return {"category": None, "product": "windows", "service": None}
+
+
+# Maps a logsource category to the filename prefix convention already used
+# by hand-written rules in rules/ (mirrors the vendored Sigma corpus's own
+# naming, e.g. proc_creation_win_*.yml, registry_event_*.yml).
+_LOGSOURCE_FILE_PREFIXES = {
+    "process_creation": "proc_creation",
+    "process_access": "proc_access",
+    "registry_event": "registry",
+    "registry_set": "registry",
+    "network_connection": "net_conn",
+    "file_event": "file_event",
+    "image_load": "image_load",
+    "pipe_created": "pipe_created",
+    "dns_query": "dns_query",
+    "ps_script": "posh_ps",
+    "create_remote_thread": "create_remote_thread",
+}
+
+
+def _rule_template_filename(attack_id: str, name: str, logsource: dict) -> Path:
+    prefix = _LOGSOURCE_FILE_PREFIXES.get(logsource.get("category")) or logsource.get(
+        "category"
+    ) or logsource.get("service") or "custom"
+    slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")[:60]
+    base = f"{prefix}_{slug}"
+    candidate = CUSTOM_RULES_DIR / f"{base}.yml"
+    suffix = 2
+    while candidate.exists():
+        candidate = CUSTOM_RULES_DIR / f"{base}_{suffix}.yml"
+        suffix += 1
+    return candidate
+
+
+def _build_rule_template(assessment: dict, logsource: dict) -> dict:
+    attack_id = assessment["attack_id"]
+    tags = sorted(
+        {f"attack.{tactic}" for tactic in assessment.get("tactics", [])}
+        | {f"attack.{attack_id.lower()}"}
+    )
+    return {
+        "title": f"TODO - {assessment['name']} Detection ({attack_id})",
+        "id": str(uuid.uuid4()),
+        "status": "experimental",
+        "description": (
+            f"TODO: describe the specific behavior detected. Drafted as a starting "
+            f"point for ATT&CK {attack_id} ({assessment['name']})."
+        ),
+        "references": [assessment["url"]],
+        "author": "suggest_rule tool (auto-generated draft -- review before use)",
+        "date": date.today().isoformat(),
+        "modified": date.today().isoformat(),
+        "tags": tags,
+        "logsource": {k: v for k, v in logsource.items() if v is not None},
+        "detection": {
+            "selection": {"TODO_add_selection_fields": "TODO_add_values"},
+            "condition": "selection",
+        },
+        "falsepositives": ["Unknown -- refine after testing against real data"],
+        "level": "medium",
+        "ruletype": "Sigma",
+    }
+
+
+@mcp.tool()
+def suggest_rule(technique_id: str, create_rule_file: bool = False) -> dict:
+    """Check custom-rule coverage for an ATT&CK technique and suggest a detection approach for any gap.
+
+    For a technique with sub-techniques (e.g. "T1003"), reports which
+    sub-techniques are uncovered and asks you to re-call with one of those
+    specific sub-technique IDs -- suggestions and rule templates are only
+    generated for a single leaf technique, since a rule tagged only with a
+    broad parent technique isn't a meaningful detection target.
+
+    For a leaf technique that isn't already "covered", looks at how the
+    vendored builtin Hayabusa/Sigma rules (if any) detect it to suggest a
+    logsource and point at reference rules; falls back to a rough
+    keyword-based logsource guess if no builtin rule covers it either. If
+    create_rule_file is True, writes a draft Sigma rule (status
+    "experimental", placeholder detection logic) into rules/ for a human to
+    refine and promote to "test"/"stable" -- it is never written for an
+    already-"covered" technique or a parent technique query.
+
+    Args:
+        technique_id: An ATT&CK technique ID, e.g. "T1003.001" or "T1003".
+        create_rule_file: If True, write a draft rule template into rules/ (see above for when this is skipped).
+    """
+    try:
+        assessment = _assess_technique_coverage(technique_id)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+
+    coverage = assessment["coverage"]
+    attack_id = assessment["attack_id"]
+    existing_custom_rules = sorted(rule["rule_name"] for rule in assessment["matching_rules"])
+
+    result = {
+        "technique_id": assessment["technique_id"],
+        "attack_id": attack_id,
+        "name": assessment["name"],
+        "url": assessment["url"],
+        "tactics": assessment["tactics"],
+        "coverage": coverage,
+        "already_covered": coverage == "covered",
+        "existing_custom_rules": existing_custom_rules,
+        "reference_builtin_rules": [],
+        "suggested_logsource": None,
+        "suggestion": None,
+        "rule_template": None,
+        "rule_file_created": None,
+    }
+
+    if assessment["sub_techniques"]:
+        uncovered = sorted(
+            sub_id
+            for sub_id, sub_coverage in assessment["sub_technique_coverage"].items()
+            if sub_coverage == "gap"
+        )
+        result["uncovered_sub_techniques"] = uncovered
+        if coverage == "covered":
+            result["suggestion"] = (
+                f"{attack_id} is fully covered ({len(assessment['sub_techniques'])} of "
+                f"{len(assessment['sub_techniques'])} sub-techniques have a matching rule). No action needed."
+            )
+        else:
+            result["suggestion"] = (
+                f"{attack_id} is a parent technique with {len(assessment['sub_techniques'])} "
+                f"sub-techniques; {len(uncovered)} are uncovered: {', '.join(uncovered) or 'none'}. "
+                "Call suggest_rule again with one specific uncovered sub-technique ID for a concrete "
+                "detection suggestion and optional rule template."
+            )
+        if create_rule_file:
+            result["suggestion"] += " (create_rule_file was ignored: not applicable to a parent technique query.)"
+        return result
+
+    if coverage == "covered":
+        result["suggestion"] = (
+            f"{attack_id} is already covered by a stable custom rule "
+            f"({', '.join(existing_custom_rules)}). No action needed."
+        )
+        if create_rule_file:
+            result["suggestion"] += " (create_rule_file was ignored: coverage is already 'covered'.)"
+        return result
+
+    builtin_refs = _find_builtin_rules_by_technique(_normalize_technique_id(technique_id))
+    top_refs = sorted(
+        builtin_refs, key=lambda r: (r.get("status") != "stable", r.get("level") != "critical")
+    )[:5]
+    result["reference_builtin_rules"] = [
+        {"title": r["title"], "level": r["level"], "status": r["status"], "rule_path": r["rule_path"]}
+        for r in top_refs
+    ]
+
+    if builtin_refs:
+        logsource_counts = Counter(
+            (r["logsource"]["category"], r["logsource"]["product"], r["logsource"]["service"])
+            for r in builtin_refs
+        )
+        (category, product, service), _count = logsource_counts.most_common(1)[0]
+        suggested_logsource = {"category": category, "product": product, "service": service}
+        result["suggestion"] = (
+            f"{len(builtin_refs)} builtin Hayabusa rule(s) already detect {attack_id} "
+            f"(e.g. \"{top_refs[0]['title']}\" at {top_refs[0]['rule_path']}). Most target "
+            f"logsource category={category!r} product={product!r} service={service!r} -- "
+            "review one of those rules' detection block as a starting point for a custom variant."
+        )
+    else:
+        suggested_logsource = _keyword_logsource_guess(assessment["description"])
+        result["suggestion"] = (
+            f"No builtin or custom rule currently tags {attack_id} -- this looks like a real gap, "
+            f"not just a missing custom rule. Based on the technique description, a plausible "
+            f"starting logsource is {suggested_logsource!r}, but this is a rough heuristic guess: "
+            f"read {assessment['url']} and confirm against real telemetry before writing detection logic."
+        )
+
+    result["suggested_logsource"] = suggested_logsource
+    template = _build_rule_template(assessment, suggested_logsource)
+    result["rule_template"] = template
+
+    if create_rule_file:
+        target_path = _rule_template_filename(attack_id, assessment["name"], suggested_logsource)
+        target_path.write_text(
+            yaml.dump(template, sort_keys=False, default_flow_style=False),
+            encoding="utf-8",
+        )
+        result["rule_file_created"] = str(target_path.relative_to(REPO_ROOT))
+        result["suggestion"] += f" Draft written to {result['rule_file_created']}."
+
+    return result
 
 
 def main() -> None:
