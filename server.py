@@ -18,6 +18,11 @@ BUILTIN_RULES_DIR = HAYABUSA_DIR / "rules"
 RULES_CONFIG_DIR = BUILTIN_RULES_DIR / "config"
 CUSTOM_RULES_DIR = REPO_ROOT / "rules"
 
+# Compact technique index built by scripts/download_attack_data.py from the
+# MITRE ATT&CK Enterprise STIX bundle (~50MB raw; this keeps just id, name,
+# description, and sub-technique relationships for the ~700 techniques).
+ATTACK_TECHNIQUES_FILE = REPO_ROOT / "attack" / "enterprise-attack-techniques.json"
+
 # Rule sources merged for both scanning and listing. Each entry is
 # (label, root dir, subdirectory to exclude from that root, if any).
 # The builtin tree's "config" subdirectory holds field-mapping data, not
@@ -327,6 +332,32 @@ def _rule_matches_technique(tags: list, technique: str) -> bool:
     return False
 
 
+def _find_custom_rules_by_technique(technique: str) -> list:
+    rules = []
+    for path in _iter_custom_rule_files():
+        rule = _parse_rule_metadata(path)
+        if rule is None or not _rule_matches_technique(rule["tags"], technique):
+            continue
+        rules.append({"rule_name": _custom_rule_name(path), **rule})
+    return rules
+
+
+_ATTACK_TECHNIQUES_CACHE = None
+
+
+def _load_attack_techniques() -> dict:
+    global _ATTACK_TECHNIQUES_CACHE
+    if _ATTACK_TECHNIQUES_CACHE is None:
+        if not ATTACK_TECHNIQUES_FILE.exists():
+            raise ValueError(
+                f"ATT&CK technique data not found at {ATTACK_TECHNIQUES_FILE}. "
+                "Run scripts/download_attack_data.py to fetch it."
+            )
+        with ATTACK_TECHNIQUES_FILE.open(encoding="utf-8") as f:
+            _ATTACK_TECHNIQUES_CACHE = json.load(f)["techniques"]
+    return _ATTACK_TECHNIQUES_CACHE
+
+
 @mcp.resource("detection://rules", mime_type="application/json")
 def list_detection_rules() -> dict:
     """List all custom Sigma detection rules available under rules/."""
@@ -356,18 +387,69 @@ def get_detection_rule(rule_name: str) -> str:
 def get_rules_by_technique(technique_id: str) -> dict:
     """List custom Sigma rules tagged with a given ATT&CK technique ID (e.g. "T1003.001" or "T1003")."""
     technique = _normalize_technique_id(technique_id)
-    rules = []
-    for path in _iter_custom_rule_files():
-        rule = _parse_rule_metadata(path)
-        if rule is None or not _rule_matches_technique(rule["tags"], technique):
-            continue
-        rules.append({"rule_name": _custom_rule_name(path), **rule})
+    rules = _find_custom_rules_by_technique(technique)
 
     return {
         "technique_id": technique_id,
         "normalized_technique_id": technique,
         "total_rule_count": len(rules),
         "rules": rules,
+    }
+
+
+@mcp.resource("detection://attack/techniques/{technique_id}", mime_type="application/json")
+def get_attack_technique_coverage(technique_id: str) -> dict:
+    """Look up an ATT&CK technique's name/description and assess our Sigma rule coverage for it.
+
+    Coverage is "gap" (no matching rules), "covered", or "partial". For a
+    technique with sub-techniques (e.g. T1003), coverage reflects how many of
+    its sub-techniques have at least one matching rule; for a leaf technique,
+    it's "covered" only if a matching rule has reached status "stable" (an
+    only-"test"-status match is "partial").
+    """
+    technique = _normalize_technique_id(technique_id)
+    attack_id = technique.upper()
+
+    techniques = _load_attack_techniques()
+    entry = techniques.get(attack_id)
+    if entry is None:
+        raise ValueError(f"Unknown ATT&CK technique: {technique_id!r}")
+
+    matching_rules = _find_custom_rules_by_technique(technique)
+    sub_techniques = entry["sub_techniques"]
+
+    sub_technique_coverage = None
+    if sub_techniques:
+        sub_technique_coverage = {
+            sub_id: "covered" if _find_custom_rules_by_technique(sub_id.lower()) else "gap"
+            for sub_id in sub_techniques
+        }
+        covered_count = sum(1 for v in sub_technique_coverage.values() if v == "covered")
+        if covered_count == 0:
+            coverage = "gap"
+        elif covered_count == len(sub_techniques):
+            coverage = "covered"
+        else:
+            coverage = "partial"
+    elif not matching_rules:
+        coverage = "gap"
+    elif any(rule.get("status") == "stable" for rule in matching_rules):
+        coverage = "covered"
+    else:
+        coverage = "partial"
+
+    return {
+        "technique_id": technique_id,
+        "attack_id": attack_id,
+        "name": entry["name"],
+        "description": entry["description"],
+        "url": entry["url"],
+        "is_subtechnique": entry["is_subtechnique"],
+        "parent_technique": entry["parent_technique"],
+        "sub_techniques": sub_techniques,
+        "matching_rules": matching_rules,
+        "coverage": coverage,
+        "sub_technique_coverage": sub_technique_coverage,
     }
 
 

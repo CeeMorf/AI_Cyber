@@ -14,12 +14,14 @@ It also exposes MCP resources over the project's own custom rules in `rules/` (n
 - `detection://rules` — list all custom rules (metadata only).
 - `detection://rules/{rule_name}` — raw YAML content of one rule, keyed by filename stem (e.g. `security_dcsync_replication_rights`).
 - `detection://rules/by-technique/{technique_id}` — rules tagged with a given ATT&CK technique; accepts a sub-technique (`T1003.001`) for an exact match or a parent technique (`T1003`) to match all its sub-techniques.
+- `detection://attack/techniques/{technique_id}` — an ATT&CK technique's name/description plus a coverage assessment (`covered`/`partial`/`gap`) against our custom rules, using a local MITRE ATT&CK technique index (see below).
 
 ## Commands
 
 - Run the server (used by MCP clients via `.mcp.json`): `python3 server.py`
 - Manual smoke test against the bundled sample EVTX: `python3 test_server.py`
 - Install/upgrade the Hayabusa binary + rules into `./hayabusa/`: `scripts/download_hayabusa.sh` (detects OS/arch, pulls the latest GitHub release, safe to re-run)
+- Fetch/refresh the local MITRE ATT&CK technique index into `./attack/`: `python3 scripts/download_attack_data.py` (downloads the ~50MB Enterprise STIX bundle, extracts a ~1MB technique index, safe to re-run)
 - Install Python deps: `pip3 install -r requirements.txt`
 
 There is no formal test suite (no pytest) — `test_server.py` is a standalone script that calls `scan_evtx` directly and prints results for manual inspection.
@@ -35,5 +37,6 @@ Everything lives in `server.py`, a single-file FastMCP server. Key structure:
 - **Severity handling**: `SEVERITY_LEVELS` / `SEVERITY_ALIASES` normalize both full names (`informational`, `critical`) and Hayabusa's abbreviated forms (`info`, `crit`, `med`) to a canonical value before passing to the CLI.
 - All user-facing errors (missing file, missing binary, invalid severity, scan timeout/failure) are raised as `mcp.server.fastmcp.exceptions.ToolError` so the MCP client gets a clean error message rather than a stack trace.
 - **`detection://` resources**: scoped to `CUSTOM_RULES_DIR` only (`_iter_custom_rule_files`), separate from the tools' merged `RULE_SOURCES` view. `_parse_rule_metadata` is shared with `get_hayabusa_rules` so both surfaces describe a rule the same way. A rule's `rule_name` (used in the URI) is its path relative to `rules/` with the extension stripped, via `_custom_rule_name`. Errors (unknown rule name) are raised as plain exceptions — FastMCP's resource dispatch wraps any exception from a resource function into a client-facing error itself, so there's no resource-specific error type to use (unlike `ToolError` for tools).
+- **`detection://attack/techniques/{technique_id}` resource**: reads `attack/enterprise-attack-techniques.json`, a compact technique index built offline by `scripts/download_attack_data.py` from MITRE's STIX bundle — the server never fetches or parses the full ~50MB bundle itself, and `_load_attack_techniques` caches the parsed index in a module-level global for the life of the process. Coverage assessment logic: for a technique with sub-techniques (e.g. `T1003`), coverage is `covered` only if every sub-technique has a matching rule, `gap` if none do, else `partial`; for a leaf technique, coverage is `covered` only if a matching rule's `status` is `stable` (a `test`-status-only match is `partial`, since none of our current custom rules have been promoted past `test`) — `gap` if there's no matching rule at all.
 
 `credential_access_rules.json` at the repo root is a saved example output of `get_hayabusa_rules` (keyword `attack.credential-access`), not source code.

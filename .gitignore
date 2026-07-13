@@ -1,6 +1,9 @@
 # Vendored/downloaded by scripts/download_hayabusa.sh — not hand-edited, not tracked.
 /hayabusa/
 
+# Vendored/downloaded by scripts/download_attack_data.py — not hand-edited, not tracked.
+/attack/
+
 __pycache__/
 *.pyc
 
