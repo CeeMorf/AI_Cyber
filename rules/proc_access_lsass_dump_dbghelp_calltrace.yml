@@ -1,0 +1,69 @@
+title: Suspicious LSASS Memory Access via MiniDump API (Dbghelp/Dbgcore CallTrace)
+id: 5515a6e7-e759-40ad-9886-02da7735301c
+status: test
+description: |
+    Detects a process opening a handle to LSASS.exe where the access call trace
+    includes dbghelp.dll or dbgcore.dll, the two DLLs that implement the
+    MiniDumpWriteDump API. Credential-dumping tools (ProcDump-style dumpers,
+    Mimikatz's sekurlsa::minidump, and various C2 "LSASS dump" modules) call
+    this API directly to write a minidump of LSASS without needing comsvcs.dll,
+    so this catches MiniDump-based dumping even when the process-creation
+    command line looks benign or the tool is memory-resident. Complements
+    proc_creation_lsass_dump_comsvcs (which only catches the rundll32/comsvcs.dll
+    invocation path) and proc_access_lsass_memory_read (which flags suspicious
+    GrantedAccess masks alone, without confirming the MiniDump API was used).
+references:
+    - https://attack.mitre.org/techniques/T1003/001/
+    - https://learn.microsoft.com/en-us/windows/win32/api/minidumpapiset/nf-minidumpwritedump-minidumpwritedump
+    - https://www.splunk.com/en_us/blog/security/you-bet-your-lsass-hunting-lsass-access.html
+author: mcp-hayabusa sample rules
+date: 2026-07-14
+modified: 2026-07-14
+tags:
+    - attack.credential-access
+    - attack.t1003.001
+logsource:
+    category: process_access
+    product: windows
+detection:
+    process_access:
+        EventID: 10
+        Channel: Microsoft-Windows-Sysmon/Operational
+    selection:
+        TargetImage|endswith: \lsass.exe
+        CallTrace|contains:
+            - dbghelp.dll
+            - dbgcore.dll
+    filter_known_tools:
+        SourceImage|endswith:
+            - \taskmgr.exe
+            - \procexp.exe
+            - \procexp64.exe
+            - \procmon.exe
+            - \procmon64.exe
+            - \MsMpEng.exe
+            - \svchost.exe
+    condition: process_access and (selection and not filter_known_tools)
+falsepositives:
+    - Task Manager's "Create dump file" action against lsass.exe (filtered by SourceImage above; a renamed copy of taskmgr.exe would bypass the filter)
+    - Sysinternals Process Explorer / Process Monitor performing legitimate diagnostics against LSASS (filtered by SourceImage above)
+    - Endpoint security or approved debugging tools that legitimately call MiniDumpWriteDump against LSASS from an image not covered by filter_known_tools
+test_cases:
+    - description: Unknown process (procdump64.exe, not in the known-tools filter) opens LSASS with dbghelp.dll present in the call trace
+      should_match: true
+      sample_fields:
+          EventID: 10
+          Channel: Microsoft-Windows-Sysmon/Operational
+          TargetImage: C:\Windows\System32\lsass.exe
+          SourceImage: C:\Users\Public\procdump64.exe
+          CallTrace: C:\Windows\SYSTEM32\ntdll.dll+9d824|C:\Windows\System32\dbghelp.dll+2ea21|C:\Users\Public\procdump64.exe+1234
+    - description: Task Manager's Create dump file action reaches LSASS via dbghelp.dll but is excluded by the known-tools filter
+      should_match: false
+      sample_fields:
+          EventID: 10
+          Channel: Microsoft-Windows-Sysmon/Operational
+          TargetImage: C:\Windows\System32\lsass.exe
+          SourceImage: C:\Windows\System32\taskmgr.exe
+          CallTrace: C:\Windows\SYSTEM32\ntdll.dll+9d824|C:\Windows\System32\dbghelp.dll+2ea21|C:\Windows\System32\taskmgr.exe+5678
+level: high
+ruletype: Sigma
