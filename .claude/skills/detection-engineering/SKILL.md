@@ -112,3 +112,10 @@ This checks standards 1-5 above (ATT&CK tags, severity level, falsepositives, te
 - `references/example-rules/lsass_memory_access.yml` — a fully worked, standards-compliant rule with inline comments pointing at where each of the five standards lives in the file. Start here when writing a new rule from scratch.
 - `references/severity-guide.md` — expands Standard 2: decision heuristics and worked examples (drawn from this repo's actual rules) for choosing between `low`/`medium`/`high`/`critical`.
 - `references/false-positive-patterns.md` — expands Standard 3: the recurring shapes false positives take (EDR/security products, infrastructure accounts, legacy protocols, help-desk workflows, migration tooling) plus a checklist for writing a specific entry instead of a hedge.
+
+## References
+
+When writing rules, consult:
+- `references/example-rules/` - Well-formatted examples to follow
+- `references/severity-guide.md` - Severity level guidance
+- `references/false-positive-patterns.md` - Common FP documentation
