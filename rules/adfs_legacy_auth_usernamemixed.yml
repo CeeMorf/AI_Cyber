@@ -1,0 +1,63 @@
+title: AD FS Legacy WS-Trust UsernameMixed Credential Validation
+id: 6aa3b1db-0f63-4f3c-8f3c-c280f500fe15
+status: test
+description: |
+    Detects a successful credential validation (Event ID 411) against an on-premises
+    AD FS server's WS-Trust UsernameMixed endpoint (RequestType containing
+    /trust/13/usernamemixed or /trust/2005/usernamemixed). This is the on-premises,
+    federated-identity analogue of Entra ID's Resource Owner Password Credentials
+    (ROPC) flow (see signinlogs_ropc_authentication_flow.yml): a legacy, non-interactive
+    endpoint that accepts a raw username/password directly instead of a browser-based
+    interactive flow, bypassing MFA and Conditional Access session controls that only
+    apply to modern auth.
+    Severity is medium, matching the equivalent Azure-side ROPC detection: legitimate
+    legacy integrations (older Exchange Hybrid connectors, some line-of-business apps)
+    still use this endpoint deliberately, so use alone isn't proof of compromise -- but
+    Microsoft's own guidance is to block legacy authentication precisely because
+    attackers favor it to sidestep modern MFA/Conditional Access, so it's a narrow,
+    actively-abused surface worth flagging.
+    Field names (RequestType, Channel) are based on documented AD FS auditing
+    (verbose) event schema; verify against a live AD FS Admin log before promoting
+    this rule past status: test.
+references:
+    - https://attack.mitre.org/techniques/T1078/002/
+    - https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/troubleshoot-ad-fs-issues
+    - https://learn.microsoft.com/en-us/entra/architecture/security-operations-applications#application-authentication-flows
+author: mcp-hayabusa sample rules
+date: 2026-07-16
+modified: 2026-07-16
+tags:
+    - attack.initial-access
+    - attack.persistence
+    - attack.privilege-escalation
+    - attack.defense-evasion
+    - attack.t1078.002
+logsource:
+    product: windows
+    service: adfs
+detection:
+    adfs:
+        Channel: AD FS/Admin
+    selection:
+        EventID: 411
+        RequestType|contains:
+            - 'trust/13/usernamemixed'
+            - 'trust/2005/usernamemixed'
+    condition: adfs and selection
+falsepositives:
+    - A known legacy application or Exchange Hybrid connector that is documented to require the WS-Trust UsernameMixed endpoint (should be tied to a reviewed, allow-listed service)
+test_cases:
+    - description: Successful credential validation via the WS-Trust UsernameMixed endpoint
+      should_match: true
+      sample_fields:
+          EventID: 411
+          Channel: AD FS/Admin
+          RequestType: 'http://contoso.com/adfs/services/trust/13/usernamemixed'
+    - description: Successful credential validation via the WindowsTransport (Integrated Windows Auth) endpoint, not the password-exposing UsernameMixed endpoint
+      should_match: false
+      sample_fields:
+          EventID: 411
+          Channel: AD FS/Admin
+          RequestType: 'http://contoso.com/adfs/services/trust/13/windowstransport'
+level: medium
+ruletype: Sigma

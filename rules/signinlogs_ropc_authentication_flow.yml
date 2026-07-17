@@ -1,0 +1,54 @@
+title: Applications That Are Using ROPC Authentication Flow
+id: 18463309-1226-4836-a6f2-950484ad433d
+status: test
+description: |
+    Resource owner password credentials (ROPC) should be avoided if at all possible
+    as this requires the user to expose their current password credentials to the
+    application directly. The application then uses those credentials to authenticate
+    the user against Entra ID.
+    Severity is medium rather than high: ROPC is a legitimate (if discouraged) OAuth
+    grant type still used by some legacy or automated-testing applications, so use
+    alone isn't proof of compromise -- but it bypasses interactive MFA prompts and
+    Conditional Access session controls that only apply to modern auth flows, so it
+    warrants review whenever it appears from an application that isn't already
+    known to require it.
+    Adapted from the official SigmaHQ rule id 55695bc0-c8cf-461f-a379-2535f563c854
+    (Mark Morowczynski, Bailey Bercik) to this project's standards: technique-specific
+    tag, test_cases, and filename convention.
+    Note on scope: this rule targets Azure AD/Entra ID sign-in logs (JSON), not
+    Windows Event Log (EVTX) -- this project's scan_evtx tool only processes EVTX
+    files, so this rule cannot match from an actual scan here. It's included for
+    ATT&CK coverage tracking and as a reference for environments that also run
+    Sigma against Azure sign-in logs through another pipeline.
+references:
+    - https://attack.mitre.org/techniques/T1078/004/
+    - https://learn.microsoft.com/en-us/entra/architecture/security-operations-applications#application-authentication-flows
+author: Mark Morowczynski '@markmorow', Bailey Bercik '@baileybercik' (adapted by mcp-hayabusa sample rules)
+date: 2026-07-16
+modified: 2026-07-16
+tags:
+    - attack.initial-access
+    - attack.persistence
+    - attack.privilege-escalation
+    - attack.defense-evasion
+    - attack.t1078.004
+logsource:
+    product: azure
+    service: signinlogs
+detection:
+    selection:
+        properties.message: ROPC
+    condition: selection
+falsepositives:
+    - A specific, known legacy application or automated-testing script that cannot use any other modern authentication flow (should be tied to a reviewed, allow-listed app registration)
+test_cases:
+    - description: Sign-in log entry flagged as using the ROPC authentication flow
+      should_match: true
+      sample_fields:
+          properties.message: ROPC
+    - description: Sign-in log entry using a modern interactive/OAuth2 authorization code flow, not ROPC
+      should_match: false
+      sample_fields:
+          properties.message: OAuth2:AuthorizationCodeGrant
+level: medium
+ruletype: Sigma
