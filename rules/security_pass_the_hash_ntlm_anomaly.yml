@@ -35,5 +35,26 @@ detection:
     condition: security and (selection and not 1 of filter_*)
 falsepositives:
     - Some legacy applications and appliances authenticate this way by design; baseline before alerting
+test_cases:
+    - description: Network logon with NTLM/NtLmSsp and zero Key Length for a regular user account
+      should_match: true
+      sample_fields:
+          EventID: 4624
+          Channel: Security
+          LogonType: 3
+          AuthenticationPackageName: NTLM
+          LogonProcessName: NtLmSsp
+          KeyLength: 0
+          TargetUserName: jsmith
+    - description: Same NTLM/zero-Key-Length pattern for a machine account logon, excluded by filter_machine_accounts
+      should_match: false
+      sample_fields:
+          EventID: 4624
+          Channel: Security
+          LogonType: 3
+          AuthenticationPackageName: NTLM
+          LogonProcessName: NtLmSsp
+          KeyLength: 0
+          TargetUserName: WORKSTATION01$
 level: high
 ruletype: Sigma

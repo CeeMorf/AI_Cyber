@@ -33,5 +33,18 @@ detection:
     condition: process_creation and (selection_command or selection_args)
 falsepositives:
     - Unlikely; these argument combinations are not used by legitimate administrative tools
+test_cases:
+    - description: Mimikatz sekurlsa::pth invocation with all three required args
+      should_match: true
+      sample_fields:
+          EventID: 4688
+          Channel: Security
+          CommandLine: 'mimikatz.exe "sekurlsa::pth /user:admin /ntlm:<hash> /run:cmd.exe"'
+    - description: "net use with a /user: argument but no /ntlm:, /run:, or sekurlsa::pth marker"
+      should_match: false
+      sample_fields:
+          EventID: 4688
+          Channel: Security
+          CommandLine: net use \\fileserver\share /user:admin Passw0rd!
 level: critical
 ruletype: Sigma

@@ -43,5 +43,22 @@ detection:
     condition: process_access and (selection and not filter_known_tools)
 falsepositives:
     - Endpoint security products and system utilities that legitimately inspect LSASS
+test_cases:
+    - description: Unrecognized process opening LSASS with a credential-dumping-associated access mask
+      should_match: true
+      sample_fields:
+          EventID: 10
+          Channel: Microsoft-Windows-Sysmon/Operational
+          SourceImage: C:\Windows\Temp\mimikatz.exe
+          TargetImage: C:\Windows\System32\lsass.exe
+          GrantedAccess: '0x1010'
+    - description: Windows Defender (MsMpEng.exe) opening LSASS with the same access mask, excluded by filter_known_tools
+      should_match: false
+      sample_fields:
+          EventID: 10
+          Channel: Microsoft-Windows-Sysmon/Operational
+          SourceImage: C:\Program Files\Windows Defender\MsMpEng.exe
+          TargetImage: C:\Windows\System32\lsass.exe
+          GrantedAccess: '0x1010'
 level: high
 ruletype: Sigma

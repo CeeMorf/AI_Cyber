@@ -35,5 +35,24 @@ detection:
     condition: security and (selection and not 1 of filter_*)
 falsepositives:
     - Legacy applications or service accounts that do not support AES encryption
+test_cases:
+    - description: Successful RC4-HMAC TGS request for a non-krbtgt, non-machine service account
+      should_match: true
+      sample_fields:
+          EventID: 4769
+          Channel: Security
+          Status: '0x0'
+          TicketEncryptionType: '0x17'
+          ServiceName: MSSQLSvc/sql01.corp.local:1433
+          TargetUserName: jdoe@CORP.LOCAL
+    - description: Same RC4 ticket type but for a krbtgt TGT renewal, excluded by filter_krbtgt
+      should_match: false
+      sample_fields:
+          EventID: 4769
+          Channel: Security
+          Status: '0x0'
+          TicketEncryptionType: '0x17'
+          ServiceName: krbtgt
+          TargetUserName: jdoe@CORP.LOCAL
 level: medium
 ruletype: Sigma

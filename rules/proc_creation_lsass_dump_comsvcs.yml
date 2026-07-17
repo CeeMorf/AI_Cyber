@@ -34,5 +34,20 @@ detection:
     condition: process_creation and (all of selection_*)
 falsepositives:
     - Unlikely; comsvcs.dll MiniDump is rarely invoked for legitimate administrative purposes
+test_cases:
+    - description: rundll32.exe invoking comsvcs.dll MiniDump against an LSASS process ID
+      should_match: true
+      sample_fields:
+          EventID: 4688
+          Channel: Security
+          Image: C:\Windows\System32\rundll32.exe
+          CommandLine: rundll32.exe C:\Windows\System32\comsvcs.dll, MiniDump 672 C:\Windows\Temp\lsass.dmp full
+    - description: rundll32.exe invoking an unrelated DLL export, no comsvcs.dll or MiniDump reference
+      should_match: false
+      sample_fields:
+          EventID: 4688
+          Channel: Security
+          Image: C:\Windows\System32\rundll32.exe
+          CommandLine: rundll32.exe printui.dll,PrintUIEntry /q
 level: critical
 ruletype: Sigma

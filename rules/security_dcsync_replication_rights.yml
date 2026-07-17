@@ -38,5 +38,24 @@ detection:
 falsepositives:
     - Legitimate replication traffic from a newly promoted Domain Controller
     - Azure AD Connect / Entra Connect sync accounts (should be reviewed and allow-listed explicitly)
+test_cases:
+    - description: Non-DC, non-system account exercising DS-Replication-Get-Changes-All rights
+      should_match: true
+      sample_fields:
+          EventID: 4662
+          Channel: Security
+          Properties: '{...} Replicating Directory Changes All {1131f6ad-9c07-11d1-f79f-00c04fc2dcd2} {...}'
+          AccessMask: '0x100'
+          SubjectUserName: svc-backup
+          SubjectDomainName: CORP
+    - description: Same replication rights exercised by a Domain Controller machine account, excluded by filter_domain_controllers
+      should_match: false
+      sample_fields:
+          EventID: 4662
+          Channel: Security
+          Properties: '{...} Replicating Directory Changes All {1131f6ad-9c07-11d1-f79f-00c04fc2dcd2} {...}'
+          AccessMask: '0x100'
+          SubjectUserName: DC01$
+          SubjectDomainName: CORP
 level: high
 ruletype: Sigma
