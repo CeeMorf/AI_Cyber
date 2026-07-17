@@ -1,0 +1,90 @@
+# Reference example for the detection-engineering skill.
+#
+# This mirrors a real rule in this repo (rules/proc_access_lsass_memory_read.yml)
+# and is annotated here to show where each of the five standards from SKILL.md
+# lives in the file. Copy the structure, not necessarily the exact content --
+# your rule's fields should reflect what you're actually detecting.
+
+title: Suspicious Process Access to LSASS Memory
+id: 95608382-e703-4ef9-9a22-04a101c6ef75  # generate a fresh uuid4 per rule, never reuse one
+status: test  # hand-written custom rules start at test; promote to stable only after review
+description: |
+    Detects a process opening a handle to LSASS.exe with an access mask commonly
+    associated with credential dumping tools (e.g. Mimikatz, ProcDump-based dumpers).
+    LSASS holds cached credentials, NTLM hashes, and Kerberos tickets in memory, making
+    it a primary target for tools implementing OS Credential Dumping.
+    # --- Standard 2: severity justification lives here, in prose ---
+    Severity is high rather than critical: the access mask is strongly associated with
+    credential dumping, but a narrow set of legitimate tools (endpoint security
+    products, sysinternals utilities) request the same access for benign inspection,
+    so it needs the filter_known_tools exclusion below rather than being an
+    unconditional compromise indicator.
+references:
+    - https://attack.mitre.org/techniques/T1003/001/
+    - https://www.slideshare.net/heirhabarov/hunting-for-credentials-dumping-in-windows-environment
+author: mcp-hayabusa sample rules
+date: 2026-07-12
+modified: 2026-07-12
+tags:
+    # --- Standard 1: ATT&CK mapping ---
+    # tactic tag(s) plus the most specific sub-technique available (t1003.001, not bare t1003)
+    - attack.credential-access
+    - attack.t1003.001
+logsource:
+    category: process_access
+    product: windows
+detection:
+    # name this block after logsource.category/service so `condition` reads naturally
+    process_access:
+        EventID: 10
+        Channel: Microsoft-Windows-Sysmon/Operational
+    selection:
+        TargetImage|endswith: \lsass.exe
+        GrantedAccess|contains:
+            - '0x1010'
+            - '0x1038'
+            - '0x1400'
+            - '0x1410'
+            - '0x1438'
+            - '0x143a'
+            - '0x1fffff'
+    filter_known_tools:
+        SourceImage|endswith:
+            - \svchost.exe
+            - \MsMpEng.exe
+            - \wmiprvse.exe
+            - \procexp64.exe
+            - \procmon64.exe
+            - \taskmgr.exe
+    condition: process_access and (selection and not filter_known_tools)
+falsepositives:
+    # --- Standard 3: concrete scenarios, not hedges ---
+    # bad: "- Unknown" / "- False positives are possible"
+    - Endpoint security products and system utilities that legitimately inspect LSASS
+test_cases:
+    # --- Standard 4: at least one should_match: true, traceable by hand through detection: ---
+    - description: Unrecognized process opening LSASS with a credential-dumping-associated access mask
+      should_match: true
+      sample_fields:
+          EventID: 10
+          Channel: Microsoft-Windows-Sysmon/Operational
+          SourceImage: C:\Windows\Temp\mimikatz.exe
+          TargetImage: C:\Windows\System32\lsass.exe
+          GrantedAccess: '0x1010'
+    # a should_match: false near-miss is strongly preferred whenever there's a filter/exclusion block,
+    # to prove the exclusion actually excludes something plausible
+    - description: Windows Defender (MsMpEng.exe) opening LSASS with the same access mask, excluded by filter_known_tools
+      should_match: false
+      sample_fields:
+          EventID: 10
+          Channel: Microsoft-Windows-Sysmon/Operational
+          SourceImage: C:\Program Files\Windows Defender\MsMpEng.exe
+          TargetImage: C:\Windows\System32\lsass.exe
+          GrantedAccess: '0x1010'
+level: high
+ruletype: Sigma
+
+# --- Standard 5: filename ---
+# This file would live at rules/proc_access_lsass_memory_access.yml in the real
+# rules/ directory: lowercase_with_underscores, prefixed proc_access_ because
+# logsource.category is process_access (see _LOGSOURCE_FILE_PREFIXES in server.py).

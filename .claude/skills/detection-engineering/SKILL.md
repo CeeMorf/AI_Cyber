@@ -106,3 +106,9 @@ python .claude/skills/detection-engineering/scripts/validate-rule.py path/to/rul
 ```
 
 This checks standards 1-5 above (ATT&CK tags, severity level, falsepositives, test_cases, filename convention) and prints a JSON report with a `valid` boolean and an `issues` list of anything that failed. Exit code is 0 if all checks pass, 1 if any fail, 2 on a file/parse error.
+
+## Reference material
+
+- `references/example-rules/lsass_memory_access.yml` — a fully worked, standards-compliant rule with inline comments pointing at where each of the five standards lives in the file. Start here when writing a new rule from scratch.
+- `references/severity-guide.md` — expands Standard 2: decision heuristics and worked examples (drawn from this repo's actual rules) for choosing between `low`/`medium`/`high`/`critical`.
+- `references/false-positive-patterns.md` — expands Standard 3: the recurring shapes false positives take (EDR/security products, infrastructure accounts, legacy protocols, help-desk workflows, migration tooling) plus a checklist for writing a specific entry instead of a hedge.
