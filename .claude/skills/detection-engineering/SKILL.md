@@ -96,3 +96,13 @@ When reviewing any Sigma rule (new or edited) in this repo, check all five, in t
 5. [ ] filename is `lowercase_with_underscores.yml` matching the existing prefix convention
 
 Also sanity-check anything the checklist doesn't cover but would break the rule at scan time: `detection.condition` references every selection/filter block actually defined, and `logsource` matches an existing prefix pattern rather than inventing a new one without reason.
+
+## Validation
+
+After creating or modifying a rule, validate it:
+
+```
+python .claude/skills/detection-engineering/scripts/validate-rule.py path/to/rule.yml
+```
+
+This checks standards 1-5 above (ATT&CK tags, severity level, falsepositives, test_cases, filename convention) and prints a JSON report with a `valid` boolean and an `issues` list of anything that failed. Exit code is 0 if all checks pass, 1 if any fail, 2 on a file/parse error.
